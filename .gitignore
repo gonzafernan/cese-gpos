@@ -1,0 +1,7 @@
+.vscode/
+*.pdf
+
+# project tmp directories
+build/
+log/
+tmp/
