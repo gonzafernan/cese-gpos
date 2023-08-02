@@ -104,6 +104,8 @@ int main(void)
      */
     printf("Got a writer\n");
 
+    size_t write_chk; // Aux var to check bytes written
+
     /* Reader loop */
     do
     {
@@ -129,13 +131,19 @@ int main(void)
         {
             continue;
         }
-        fwrite(buffer_content, sizeof(char), strlen(buffer_content), plog);
+        write_chk = fwrite(buffer_content, sizeof(char), strlen(buffer_content), plog);
+        if (write_chk < strlen(buffer_content))
+        {
+            perror("Error encountered when writing log file");
+        }
 
     } while (bytes_read > 0);
 
     // Close file pointers
-    fclose(pdata_log);
-    fclose(psign_log);
+    if (fclose(pdata_log) != 0 || fclose(psign_log) != 0)
+    {
+        perror("Error closing log file");
+    }
 
     return 0;
 }

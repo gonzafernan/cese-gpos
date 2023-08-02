@@ -22,4 +22,24 @@ escribir en el named FIFO el siguiente mensaje: *SIGN:1* o *SIGN:2*
 
 **Proceso reader:**
 
-Este proceso leerá los datos del named fifo y según el encabezado "DATA" o "SIGN" escribirá en el archivo *log.txt* o *signals.txt*.
+Este proceso leerá los datos del named fifo y según el encabezado "DATA" o "SIGN" escribirá en el archivo *log.txt* o *signals.txt*
+
+### Ejecución
+
+Para iniciar proceso writer (compilación y ejecución):
+```sh
+make writer
+```
+
+Para iniciar proceso reader (compilación y ejecución):
+```sh
+make reader
+```
+
+Para enviar señales SIGUSR al proceso writer:
+```sh
+kill -SIGUSR1 {writer PID}
+kill -SIGUSR2 {writer PID}
+```
+
+El PID del writer se ofrece en el mensaje de inicialización del proceso.
