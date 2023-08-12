@@ -14,3 +14,4 @@ repos:
   hooks:
   - id: clang-format
     name: Formating C files with Clang-Format
+    types_or: [c++, c]
