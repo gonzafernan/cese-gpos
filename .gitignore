@@ -5,3 +5,6 @@
 build/
 log/
 tmp/
+
+# practice 2
+tp2/SerialService/serialService

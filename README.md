@@ -89,3 +89,19 @@ se modifican los archivos desde el sitio web).
 
 Por último este servicio iniciará un servidor TCP para que el servicio InterfaceService se puede
 conectar y comunicar.
+
+### Protocolo serie entre el Emulador y SerialService y protocolo TCP entre SerialService e InterfaceService
+
+#### Seteo encendido de salida (hacia el emulador)
+">OUT:X,Y\r\n"
+
+Siendo X el número de salida (0, 1 ó 2) e Y el estado (0 ó 1).
+
+Esta trama es la misma que enviará InterfaceService a SerialService.
+
+#### Evento pulsador (desde el emulador)
+">SW:X,Y\r\n"
+
+Siendo X el número de salida (0, 1 ó 2) e Y el nuevo estado a setear (0 ó 1).
+
+Esta trama es la misma que enviará SerialService a InterfaceService.
