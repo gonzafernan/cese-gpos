@@ -65,6 +65,10 @@ int serial_mask_signal(int mask_how) {
     if (0 != rcode) {
         return rcode;
     }
+    rcode = sigaddset(&sigset, SIGTERM);
+    if (0 != rcode) {
+        return rcode;
+    }
     return pthread_sigmask(mask_how, &sigset, NULL);
 }
 
@@ -72,6 +76,9 @@ void sa_serial_handler(int signo) {
     if (SIGINT == signo) {
         printf("Serial service exit by SIGINT\r\n");
         serial_service_exit(EXIT_SUCCESS);
+    } else if (SIGTERM == signo) {
+        printf("Serial service exit by SIGTERM\r\n");
+        serial_service_exit(EXIT_FAILURE);
     }
 }
 
@@ -241,6 +248,10 @@ int main(void) {
         serial_service_exit(EXIT_FAILURE);
     }
     if (0 != sigaction(SIGINT, &sa_serial, NULL)) {
+        perror("ERROR: Unable to set signal handler");
+        serial_service_exit(EXIT_FAILURE);
+    }
+    if (0 != sigaction(SIGTERM, &sa_serial, NULL)) {
         perror("ERROR: Unable to set signal handler");
         serial_service_exit(EXIT_FAILURE);
     }
