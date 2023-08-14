@@ -26,8 +26,12 @@
 
 bool serial_lock; /*!> Flag for serial connected */
 bool client_lock; /*!> Flag for client connected */
+bool server_lock; /*!> Flag for TCP/IP server running */
 
 int fd_conn; /*!> File descriptor for connection (to listen the client) */
+
+pthread_t serial_thread; /*!> serial thread, emulator read loop */
+pthread_t server_thread; /*!> server listen thread */
 
 pthread_mutex_t serial_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -41,10 +45,24 @@ void serial_service_exit(int exit_code) {
     if (serial_lock) {
         serial_close();
         printf("Serial port closed\r\n");
+        if (0 != pthread_cancel(serial_thread)) {
+            perror("ERROR: Unable to cancel serial port polling thread");
+        }
     }
     if (client_lock) {
         close(fd_conn);
         printf("Client socket closed\r\n");
+    }
+    if (server_lock) {
+        if (0 != pthread_cancel(server_thread)) {
+            perror("ERROR: Unable to cancel server thread");
+        }
+    }
+    if (0 != pthread_join(serial_thread, NULL)) {
+        perror("ERROR: Unable to join serial port polling thread");
+    }
+    if (0 != pthread_join(server_thread, NULL)) {
+        perror("ERROR: Unable to join serial port polling thread");
     }
     exit(exit_code);
 }
@@ -103,6 +121,7 @@ void *serial_port_listen(void *args) {
         if (0 > read_size)
             continue; // No reading
         if (0 == read_size) {
+            serial_lock = false;
             printf("WARNING: Serial port closed\r\n");
             pthread_exit(NULL);
         }
@@ -123,6 +142,8 @@ void *serial_port_listen(void *args) {
  */
 void *serial_server_listen(void *args) {
     printf("Serial service TCP/IP server setup\r\n");
+
+    server_lock = true;
 
     int rcode;     // to check return values
     int fd_socket; // server soket file descriptor (to accept new connection)
@@ -264,9 +285,6 @@ int main(void) {
         serial_service_exit(EXIT_FAILURE);
     }
 
-    pthread_t serial_thread; // serial thread, emulator read loop
-    pthread_t server_thread; // server listen thread
-
     // Open serial port
     if (0 > serial_open(0, SERIAL_PORT_BAUDRATE)) {
         printf("ERROR: Unable to open serial port\r\n");
@@ -298,9 +316,6 @@ int main(void) {
         serial_service_exit(EXIT_FAILURE);
     }
 
-    if (0 != pthread_join(serial_thread, NULL)) {
-        perror("ERROR: Unable to join serial port polling thread");
-    }
     serial_service_exit(EXIT_SUCCESS);
     return 0;
 }
