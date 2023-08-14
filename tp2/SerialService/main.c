@@ -33,7 +33,7 @@ int fd_conn; /*!> File descriptor for connection (to listen the client) */
 pthread_t serial_thread; /*!> serial thread, emulator read loop */
 pthread_t server_thread; /*!> server listen thread */
 
-pthread_mutex_t serial_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t client_mutex = PTHREAD_MUTEX_INITIALIZER; /*!> Client connection flag mutex */
 
 // Functions definition
 void *serial_server_connect(void *args);
@@ -110,14 +110,12 @@ void *serial_port_listen(void *args) {
     serial_lock = true;
     char rx_buffer[SERIAL_MSG_LENGTH];
     int read_size;
+    bool client_status;
 
     while (1) {
         sleep(1);
         // Non-blocking serial read (mutex since it's a shared resource)
-        pthread_mutex_lock(&serial_mutex);
         read_size = serial_receive(rx_buffer, SERIAL_MSG_LENGTH);
-        pthread_mutex_unlock(&serial_mutex);
-
         if (0 > read_size)
             continue; // No reading
         if (0 == read_size) {
@@ -127,7 +125,10 @@ void *serial_port_listen(void *args) {
         }
 
         printf("Serial service egress: %s", rx_buffer);
-        if (!client_lock)
+        pthread_mutex_lock(&client_mutex);
+        client_status = client_lock;
+        pthread_mutex_unlock(&client_mutex);
+        if (!client_status)
             continue;
 
         // write: write to client (the accepted connection)
@@ -228,7 +229,10 @@ void *serial_server_listen(void *args) {
 void *serial_server_connect(void *args) {
     printf("Serial service transmit over TCP/IP server\r\n");
 
+    pthread_mutex_lock(&client_mutex);
     client_lock = true;
+    pthread_mutex_unlock(&client_mutex);
+
     char tx_buffer[SERIAL_MSG_LENGTH];
     ssize_t read_size;
 
@@ -243,13 +247,13 @@ void *serial_server_connect(void *args) {
             break;
         }
         printf("Serial service ingress: %s", tx_buffer);
-        pthread_mutex_lock(&serial_mutex);
         serial_send(tx_buffer, SERIAL_MSG_LENGTH);
-        pthread_mutex_unlock(&serial_mutex);
     }
 
     close(fd_conn);
+    pthread_mutex_lock(&client_mutex);
     client_lock = false;
+    pthread_mutex_unlock(&client_mutex);
 }
 
 int main(void) {
