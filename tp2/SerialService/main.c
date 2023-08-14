@@ -53,17 +53,17 @@ void serial_service_exit(int exit_code) {
         close(fd_conn);
         printf("Client socket closed\r\n");
     }
-    if (server_lock) {
-        if (0 != pthread_cancel(server_thread)) {
-            perror("ERROR: Unable to cancel server thread");
-        }
-    }
+    // if (server_lock) {
+    //     if (0 != pthread_cancel(server_thread)) {
+    //         perror("ERROR: Unable to cancel server thread");
+    //     }
+    // }
     if (0 != pthread_join(serial_thread, NULL)) {
         perror("ERROR: Unable to join serial port polling thread");
     }
-    if (0 != pthread_join(server_thread, NULL)) {
-        perror("ERROR: Unable to join serial port polling thread");
-    }
+    // if (0 != pthread_join(server_thread, NULL)) {
+    //     perror("ERROR: Unable to join serial port polling thread");
+    // }
     exit(exit_code);
 }
 
@@ -210,7 +210,7 @@ void *serial_server_listen(void *args) {
 
         serial_server_connect(NULL);
 
-        // Block if multi-client
+        // Code block if multi-client
         // rcode = pthread_create(&conn_thread, NULL, serial_server_connect, NULL);
         // if (0 != rcode)
         // {
@@ -299,14 +299,6 @@ int main(void) {
         serial_service_exit(EXIT_FAILURE);
     }
 
-    // Create TCP/IP server listen thread
-    rcode = pthread_create(&server_thread, NULL, serial_server_listen, NULL);
-    if (0 != rcode) {
-        errno = rcode;
-        perror("ERROR: Unable to create serial service server thread");
-        serial_service_exit(EXIT_FAILURE);
-    }
-
     // Unblock signals, the main thread can handle them safely
     rcode = serial_mask_signal(SIG_UNBLOCK);
     if (0 != rcode) {
@@ -315,6 +307,17 @@ int main(void) {
         perror("ERROR: Unable to unblock signals in main thread");
         serial_service_exit(EXIT_FAILURE);
     }
+
+    // Create TCP/IP server listen thread
+    serial_server_listen(NULL);
+
+    // Code block for server thread
+    // rcode = pthread_create(&server_thread, NULL, serial_server_listen, NULL);
+    // if (0 != rcode) {
+    //     errno = rcode;
+    //     perror("ERROR: Unable to create serial service server thread");
+    //     serial_service_exit(EXIT_FAILURE);
+    // }
 
     serial_service_exit(EXIT_SUCCESS);
     return 0;
