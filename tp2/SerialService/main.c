@@ -28,15 +28,17 @@ bool serial_lock; /*!> Flag for serial connected */
 bool client_lock; /*!> Flag for client connected */
 bool server_lock; /*!> Flag for TCP/IP server running */
 
-int fd_conn; /*!> File descriptor for connection (to listen the client) */
+bool sigint_flag;  /*!> Flag for SIGINT signal */
+bool sigterm_flag; /*!> Flag for SIGTERM signal */
 
-pthread_t serial_thread; /*!> serial thread, emulator read loop */
-pthread_t server_thread; /*!> server listen thread */
+int fd_conn;   /*!> File descriptor for connection (to listen the client) */
+int fd_socket; /*!> Server socket file descriptor (to accept new connection) */
 
-pthread_mutex_t serial_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_t serial_thread;                                  /*!> serial thread, emulator read loop */
+pthread_mutex_t client_mutex = PTHREAD_MUTEX_INITIALIZER; /*!> Client connection flag mutex */
 
 // Functions definition
-void *serial_server_connect(void *args);
+int serial_server_connect(void);
 
 /**
  * @brief Serial service exit process
@@ -45,25 +47,21 @@ void serial_service_exit(int exit_code) {
     if (serial_lock) {
         serial_close();
         printf("Serial port closed\r\n");
-        if (0 != pthread_cancel(serial_thread)) {
-            perror("ERROR: Unable to cancel serial port polling thread");
-        }
     }
     if (client_lock) {
-        close(fd_conn);
+        if (0 > close(fd_conn))
+            perror("ERROR: Unable to close client socket");
+        else
+            printf("Closed server socket\r\n");
         printf("Client socket closed\r\n");
     }
-    // if (server_lock) {
-    //     if (0 != pthread_cancel(server_thread)) {
-    //         perror("ERROR: Unable to cancel server thread");
-    //     }
-    // }
-    if (0 != pthread_join(serial_thread, NULL)) {
-        perror("ERROR: Unable to join serial port polling thread");
+    if (server_lock) {
+        if (0 > close(fd_socket))
+            perror("ERROR: Unable to close server socket");
+        else
+            printf("Closed server socket\r\n");
+        printf("Server socket closed\r\n");
     }
-    // if (0 != pthread_join(server_thread, NULL)) {
-    //     perror("ERROR: Unable to join serial port polling thread");
-    // }
     exit(exit_code);
 }
 
@@ -92,11 +90,9 @@ int serial_mask_signal(int mask_how) {
 
 void sa_serial_handler(int signo) {
     if (SIGINT == signo) {
-        printf("Serial service exit by SIGINT\r\n");
-        serial_service_exit(EXIT_SUCCESS);
+        sigint_flag = true;
     } else if (SIGTERM == signo) {
-        printf("Serial service exit by SIGTERM\r\n");
-        serial_service_exit(EXIT_FAILURE);
+        sigterm_flag = true;
     }
 }
 
@@ -110,14 +106,12 @@ void *serial_port_listen(void *args) {
     serial_lock = true;
     char rx_buffer[SERIAL_MSG_LENGTH];
     int read_size;
+    bool client_status;
 
     while (1) {
-        sleep(1);
+        usleep(100000);
         // Non-blocking serial read (mutex since it's a shared resource)
-        pthread_mutex_lock(&serial_mutex);
         read_size = serial_receive(rx_buffer, SERIAL_MSG_LENGTH);
-        pthread_mutex_unlock(&serial_mutex);
-
         if (0 > read_size)
             continue; // No reading
         if (0 == read_size) {
@@ -127,7 +121,10 @@ void *serial_port_listen(void *args) {
         }
 
         printf("Serial service egress: %s", rx_buffer);
-        if (!client_lock)
+        pthread_mutex_lock(&client_mutex);
+        client_status = client_lock;
+        pthread_mutex_unlock(&client_mutex);
+        if (!client_status)
             continue;
 
         // write: write to client (the accepted connection)
@@ -138,15 +135,23 @@ void *serial_port_listen(void *args) {
 }
 
 /**
+ * @brief Server close routine
+ */
+void server_close(void) {
+    if (0 > close(fd_socket))
+        perror("ERROR: Unable to close server socket");
+    else
+        printf("Closed server socket\r\n");
+    server_lock = false;
+}
+
+/**
  * @brief TCP/IP server listen thread
  */
-void *serial_server_listen(void *args) {
+int serial_server_listen(void) {
     printf("Serial service TCP/IP server setup\r\n");
 
-    server_lock = true;
-
-    int rcode;     // to check return values
-    int fd_socket; // server soket file descriptor (to accept new connection)
+    int rcode; // to check return values
 
     socklen_t addr_len;            // store sockaddr structure size
     struct sockaddr_in serveraddr; // server address (_in internet)
@@ -161,6 +166,8 @@ void *serial_server_listen(void *args) {
         return 0;
     }
 
+    server_lock = true; // set server running flag
+
     // set server address structure
     bzero((void *)&serveraddr, sizeof(serveraddr)); // initialize with \0 the structure
     serveraddr.sin_family = AF_INET;                // intenet family
@@ -170,16 +177,18 @@ void *serial_server_listen(void *args) {
     rcode = inet_pton(AF_INET, SERIAL_SERVICE_IP_ADDR, (void *)&serveraddr.sin_addr);
     if (0 == rcode) {
         printf("ERROR: Invalid network address for server\r\n");
+        server_close();
         return 0;
     } else if (0 > rcode) {
         perror("ERROR: Unable to set server IP address");
+        server_close();
         return 0;
     }
 
     // bind: port and IP assignment
     if (0 > bind(fd_socket, (struct sockaddr *)&serveraddr, sizeof(serveraddr))) {
         perror("ERROR: Unable to bind TCP server socket");
-        close(fd_socket);
+        server_close();
         return 0;
     }
 
@@ -188,6 +197,7 @@ void *serial_server_listen(void *args) {
     // the maximum length of the pending connections queue is one.
     if (0 > listen(fd_socket, 1)) {
         perror("ERROR: Socket unable to listen for connections");
+        server_close();
         return 0;
     }
 
@@ -198,7 +208,11 @@ void *serial_server_listen(void *args) {
         fd_conn = accept(fd_socket, (struct sockaddr *)&clientaddr, &addr_len);
         if (0 > fd_conn) {
             perror("ERROR: Refused pending connection, unable to accept");
-            continue; // is this correct?
+            if (sigint_flag || sigterm_flag) {
+                server_close();
+                return 1;
+            }
+            continue;
         }
 
         // log msg on connection. inet_ntop: convert IPv4 and IPv6 addresses from binary to text
@@ -208,57 +222,67 @@ void *serial_server_listen(void *args) {
             printf("New connection with client IP %s\r\n", ip_client);
         }
 
-        serial_server_connect(NULL);
-
-        // Code block if multi-client
-        // rcode = pthread_create(&conn_thread, NULL, serial_server_connect, NULL);
-        // if (0 != rcode)
-        // {
-        //     errno = rcode;
-        //     perror("ERROR: Unable to create server thread");
-        //     close(fd_conn);
-        //     return (void*)-1;
-        // }
+        // Connection read loop (one client architecture)
+        if (0 != serial_server_connect()) {
+            server_close();
+            return 1;
+        }
     }
 }
 
 /**
  * @brief TCPIP server connection thread
  */
-void *serial_server_connect(void *args) {
+int serial_server_connect(void) {
     printf("Serial service transmit over TCP/IP server\r\n");
 
+    int rcode; // to check return values
+
+    pthread_mutex_lock(&client_mutex);
     client_lock = true;
+    pthread_mutex_unlock(&client_mutex);
+
     char tx_buffer[SERIAL_MSG_LENGTH];
     ssize_t read_size;
 
     while (1) {
+        rcode = 0;
+
         // read: read from client (the accepted connection) (blocking)
         read_size = read(fd_conn, (void *)tx_buffer, SERIAL_MSG_LENGTH);
         if (0 > read_size) {
             perror("ERROR: reading from client");
+            if (sigint_flag || sigterm_flag) {
+                if (0 > close(fd_conn))
+                    perror("ERROR: Unable to close server socket");
+                else
+                    printf("Closed server socket\r\n");
+                rcode = 1;
+            }
             break;
         } else if (0 == read_size) {
             printf("Client disconnected\r\n");
             break;
         }
         printf("Serial service ingress: %s", tx_buffer);
-        pthread_mutex_lock(&serial_mutex);
         serial_send(tx_buffer, SERIAL_MSG_LENGTH);
-        pthread_mutex_unlock(&serial_mutex);
     }
 
-    close(fd_conn);
+    pthread_mutex_lock(&client_mutex);
     client_lock = false;
+    pthread_mutex_unlock(&client_mutex);
+    return rcode;
 }
 
 int main(void) {
 
     printf("Inicio Serial Service\r\n");
 
-    int rcode;           // to check return values
-    serial_lock = false; // init lock, emulator not connected
-    client_lock = false; // init lock, client not connected
+    int rcode;            // to check return values
+    sigint_flag = false;  // SIGINT flag initialization
+    sigterm_flag = false; // SIGTERM flag initialization
+    serial_lock = false;  // init lock, emulator not connected
+    client_lock = false;  // init lock, client not connected
 
     // Setup signal management
     struct sigaction sa_serial;
@@ -266,15 +290,21 @@ int main(void) {
     sa_serial.sa_flags = 0;
     if (0 != sigemptyset(&sa_serial.sa_mask)) {
         perror("ERROR: Unable to create signal empty set");
-        serial_service_exit(EXIT_FAILURE);
+        exit(EXIT_FAILURE);
     }
     if (0 != sigaction(SIGINT, &sa_serial, NULL)) {
         perror("ERROR: Unable to set signal handler");
-        serial_service_exit(EXIT_FAILURE);
+        exit(EXIT_FAILURE);
     }
     if (0 != sigaction(SIGTERM, &sa_serial, NULL)) {
         perror("ERROR: Unable to set signal handler");
-        serial_service_exit(EXIT_FAILURE);
+        exit(EXIT_FAILURE);
+    }
+
+    // Open serial port
+    if (0 > serial_open(0, SERIAL_PORT_BAUDRATE)) {
+        printf("ERROR: Unable to open serial port\r\n");
+        exit(EXIT_SUCCESS);
     }
 
     rcode = serial_mask_signal(SIG_BLOCK);
@@ -282,13 +312,7 @@ int main(void) {
         if (rcode != -1)
             errno = rcode;
         perror("ERROR: Unable to block signals in main thread");
-        serial_service_exit(EXIT_FAILURE);
-    }
-
-    // Open serial port
-    if (0 > serial_open(0, SERIAL_PORT_BAUDRATE)) {
-        printf("ERROR: Unable to open serial port\r\n");
-        serial_service_exit(EXIT_SUCCESS);
+        exit(EXIT_FAILURE);
     }
 
     // Create serial thread
@@ -309,16 +333,20 @@ int main(void) {
     }
 
     // Create TCP/IP server listen thread
-    serial_server_listen(NULL);
+    rcode = serial_server_listen();
 
-    // Code block for server thread
-    // rcode = pthread_create(&server_thread, NULL, serial_server_listen, NULL);
-    // if (0 != rcode) {
-    //     errno = rcode;
-    //     perror("ERROR: Unable to create serial service server thread");
-    //     serial_service_exit(EXIT_FAILURE);
-    // }
+    // Cancel serial port polling thread
+    if (0 != pthread_cancel(serial_thread)) {
+        perror("ERROR: Unable to cancel serial port polling thread");
+    }
 
-    serial_service_exit(EXIT_SUCCESS);
+    // Wait for serial port polling thread to finish
+    if (0 != pthread_join(serial_thread, NULL)) {
+        perror("ERROR: Unable to join serial port polling thread");
+    }
+
+    // Serial service exit process
+    serial_service_exit(rcode);
+
     return 0;
 }
